@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sympg"
-version = "0.1.0"
+version = "0.1.1"
 description = "Synthetic Multivariate Data Generator using Gaussian Copulas"
 readme = "README.md"
 authors = [{ name = "Serena Defina", email = "s.defina@erasmusmc.nl" }]

@@ -1,6 +1,7 @@
 from scipy.stats import (
     beta, gamma, norm, lognorm, truncnorm, uniform as sp_uniform, rv_continuous)
 import numpy as np
+import inspect
 
 class MixtureModel(rv_continuous):
     
@@ -87,3 +88,102 @@ def _build_distribution_registry():
         "truncnorm": _truncnorm,
         "mixture":   _mixture
     }
+
+DISTRIBUTIONS = _build_distribution_registry()
+
+
+def _apply_distribution(uniform_samples: np.ndarray, dist_spec) -> np.ndarray:
+
+    if callable(dist_spec) and not isinstance(dist_spec, dict):
+        return dist_spec(uniform_samples)
+    
+    if isinstance(dist_spec, str):
+        dist_name, params = dist_spec, {}
+
+    elif isinstance(dist_spec, dict):
+        dist_spec = dict(dist_spec)  # don't mutate caller's dict
+        
+        # Resolve the actual distribution function name
+        if "type" in dist_spec:
+            dist_name = dist_spec.pop("type")
+            # Pop 'name' so it isn't passed as a kwarg to the distribution function
+            if "name" in dist_spec:
+                dist_spec.pop("name")
+        else:
+            dist_name = dist_spec.pop("name")
+            
+        params = dist_spec
+    else:
+        raise TypeError(f"dist_spec must be str, dict, or callable; got {type(dist_spec)}")
+        
+    if dist_name not in DISTRIBUTIONS:
+        raise ValueError(
+            f"Unknown distribution '{dist_name}'. Available: {sorted(DISTRIBUTIONS.keys())}"
+        )
+    return DISTRIBUTIONS[dist_name](uniform_samples, **params)
+
+
+def _extract_dist_info(dist_spec):
+    """
+    Extracts the underlying distribution type and its full parameters, 
+    merging any user-provided overrides with the function's default values.
+    """
+    # TODO: inspect custom callables too for params 
+
+    # 1. Parse the user's input
+    if isinstance(dist_spec, str):
+        dist_type = dist_spec
+        user_params = {}
+
+    elif isinstance(dist_spec, dict):
+        user_params = dist_spec.copy()
+        dist_type = user_params.pop("type", user_params.pop("name", "custom"))
+        user_params.pop("name", None)  # Remove name if it's still there
+
+    elif callable(dist_spec):
+        dist_type = getattr(dist_spec, "__name__", "custom")
+        user_params = {}
+
+    else:
+        dist_type = "custom"
+        user_params = {}
+
+    # 2. Get defaults dynamically from the DISTRIBUTIONS registry
+    final_params = {}
+    if dist_type in DISTRIBUTIONS:
+        func = DISTRIBUTIONS[dist_type]
+        sig = inspect.signature(func)
+        
+        for param_name, param in sig.parameters.items():
+            # Skip 'u' (the uniform array input)
+            if param_name == 'u':
+                continue
+            # If the parameter has a default value, store it
+            if param.default is not inspect.Parameter.empty:
+                final_params[param_name] = param.default
+
+    # 3. Override defaults with any parameters the user provided
+    final_params.update(user_params)
+
+    return dist_type, final_params
+
+def _minmax_norm(df, normalize = True):
+    """ Normalise values between 0 and 1. """
+
+    if normalize is False: 
+        return df
+
+    if normalize is True:
+        cols_to_norm = df.columns
+
+    elif isinstance(normalize, list):
+        # Handle both integer indices and string names
+        cols_to_norm = [df.columns[c] if isinstance(c, int) else c for c in normalize]
+    
+    for col in cols_to_norm:
+        cpg = df[col]
+        norm_cpg = (cpg - cpg.min()) / (cpg.max() - cpg.min())
+        df[col] = norm_cpg
+    
+    return df
+

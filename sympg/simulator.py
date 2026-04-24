@@ -9,69 +9,13 @@ import pandas as pd
 from scipy.stats import norm
 from scipy.linalg import block_diag
 from typing import List, Dict, Optional, Union
-import inspect
 
-from .distributions import _build_distribution_registry
+from .distributions import _apply_distribution, _extract_dist_info, _minmax_norm
 from .correlations import _is_pd, _nearest_pd
-
-# ---------------------------------------------------------------------------
-# Built-in distribution registry
-# ---------------------------------------------------------------------------
-
-DISTRIBUTIONS = _build_distribution_registry()
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _minmax_norm(cpg):
-    """ Normalise values between 0 and 1. """
-    norm_cpg = (cpg - cpg.min()) / (cpg.max() - cpg.min())
-    return(norm_cpg)
-
-
-def _apply_distribution(uniform_samples: np.ndarray, dist_spec) -> np.ndarray:
-
-    if callable(dist_spec) and not isinstance(dist_spec, dict):
-        return dist_spec(uniform_samples)
-    
-    if isinstance(dist_spec, str):
-        dist_name, params = dist_spec, {}
-
-    elif isinstance(dist_spec, dict):
-        dist_spec = dict(dist_spec)  # don't mutate caller's dict
-        
-        # Resolve the actual distribution function name
-        if "type" in dist_spec:
-            dist_name = dist_spec.pop("type")
-            # Pop 'name' so it isn't passed as a kwarg to the distribution function
-            if "name" in dist_spec:
-                dist_spec.pop("name")
-        else:
-            dist_name = dist_spec.pop("name")
-            
-        params = dist_spec
-    else:
-        raise TypeError(f"dist_spec must be str, dict, or callable; got {type(dist_spec)}")
-        
-    if dist_name not in DISTRIBUTIONS:
-        raise ValueError(
-            f"Unknown distribution '{dist_name}'. Available: {sorted(DISTRIBUTIONS.keys())}"
-        )
-    return DISTRIBUTIONS[dist_name](uniform_samples, **params)
-
-def _dist_label(dist_spec) -> str:
-    """Return a short human-readable name for a distribution spec."""
-    if isinstance(dist_spec, str):
-        return dist_spec
-
-    if isinstance(dist_spec, dict):
-        return dist_spec.get("name", dist_spec.get("type", "custom"))
-
-    if callable(dist_spec):
-        return getattr(dist_spec, "__name__", "custom")
-
-    return str(dist_spec)
 
 
 def _make_var_names(distributions: List) -> List[str]:
@@ -107,47 +51,6 @@ def _make_var_names(distributions: List) -> List[str]:
         
     return names
 
-
-def _extract_dist_info(dist_spec):
-    """
-    Extracts the underlying distribution type and its full parameters, 
-    merging any user-provided overrides with the function's default values.
-    """
-    # TODO: inspect custom callables too for params 
-
-    # 1. Parse the user's input
-    if isinstance(dist_spec, str):
-        dist_type = dist_spec
-        user_params = {}
-    elif isinstance(dist_spec, dict):
-        user_params = dist_spec.copy()
-        dist_type = user_params.pop("type", user_params.pop("name", "custom"))
-        user_params.pop("name", None)  # Remove name if it's still there
-    elif callable(dist_spec):
-        dist_type = getattr(dist_spec, "__name__", "custom")
-        user_params = {}
-    else:
-        dist_type = "custom"
-        user_params = {}
-
-    # 2. Get defaults dynamically from the DISTRIBUTIONS registry
-    final_params = {}
-    if dist_type in DISTRIBUTIONS:
-        func = DISTRIBUTIONS[dist_type]
-        sig = inspect.signature(func)
-        
-        for param_name, param in sig.parameters.items():
-            # Skip 'u' (the uniform array input)
-            if param_name == 'u':
-                continue
-            # If the parameter has a default value, store it
-            if param.default is not inspect.Parameter.empty:
-                final_params[param_name] = param.default
-
-    # 3. Override defaults with any parameters the user provided
-    final_params.update(user_params)
-
-    return dist_type, final_params
 
 # ---------------------------------------------------------------------------
 # simulate(): one dataset, arbitrary corr matrix
@@ -218,18 +121,8 @@ def simulate(
         for k, (dist_spec, name) in enumerate(zip(distributions, var_names))
     })
 
-    # Apply Normalization
-    if normalize is True:
-        cols_to_norm = df.columns
-
-    elif isinstance(normalize, list):
-        # Handle both integer indices and string names
-        cols_to_norm = [df.columns[c] if isinstance(c, int) else c for c in normalize]
-    else:
-        cols_to_norm = []
-        
-    for col in cols_to_norm:
-        df[col] = _minmax_norm(df[col])
+    # Apply Normalization (if specified)
+    df = _minmax_norm(df, normalize)
 
     return df
 
@@ -318,15 +211,7 @@ def simulate_grid(
     data = pd.DataFrame(df_data)
 
     # 5. Apply Normalization
-    if normalize is True:
-        cols_to_norm = data.columns
-    elif isinstance(normalize, list):
-        cols_to_norm = [data.columns[c] if isinstance(c, int) else c for c in normalize]
-    else:
-        cols_to_norm = []
-        
-    for col in cols_to_norm:
-        data[col] = _minmax_norm(data[col])
+    data = _minmax_norm(data, normalize)
 
     # 6. Build the Correlation Pairwise Metadata
     observed_corr_df = data.corr(method="spearman").round(4)
