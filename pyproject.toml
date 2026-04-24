@@ -23,3 +23,8 @@ dev = ["pytest", "pytest-cov"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sympg*"]
+
+[project.urls]
+Homepage = "https://github.com/SereDef/sympg"
+Repository = "https://github.com/SereDef/sympg"
+Issues = "https://github.com/SereDef/sympg/issues"
