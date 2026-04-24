@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sympg"
+version = "0.1.0"
+description = "Synthetic Multivariate Data Generator using Gaussian Copulas"
+readme = "README.md"
+authors = [{ name = "Serena Defina", email = "s.defina@erasmusmc.nl" }]
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["simulation", "copula", "synthetic data", "DNA methylation", "multivariate"]
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "scipy>=1.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sympg*"]

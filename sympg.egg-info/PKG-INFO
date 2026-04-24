@@ -1,0 +1,177 @@
+Metadata-Version: 2.4
+Name: sympg
+Version: 0.1.0
+Summary: Synthetic Multivariate Data Generator using Gaussian Copulas
+License: MIT
+Keywords: simulation,copula,synthetic data,DNA methylation,multivariate
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.23
+Requires-Dist: pandas>=1.5
+Requires-Dist: scipy>=1.9
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+
+# SymPG — Synthetic Multivariate Data Generator
+
+SymPG generates simulated datasets with arbitrary marginal distributions and a
+user-specified correlation structure, using the **Gaussian copula** approach. This was originally developed for DNA-methylation (CpG) data simulation.
+
+## How it works
+
+1. Draw correlated standard-normal samples using the target correlation matrix
+   (Cholesky decomposition).
+2. Map each column to \[0,1\] via the normal CDF (probability integral transform).
+3. Apply the inverse CDF of the desired marginal distribution to each column.
+
+This preserves the rank correlation structure while allowing any marginal shape.
+
+---
+
+## Installation
+
+```bash
+pip install -e .          # from source
+# or once published:
+pip install sympg
+```
+
+---
+
+## Quick start
+
+```python
+import sympg
+
+# 1. Define marginal distributions for each variable
+# distributions = [
+#     "normal",                            # standard normal
+#     {"name": "beta",  "a": 2, "b": 5},  # beta(2,5)  → bounded [0,1]
+#     {"name": "gamma", "a": 3},           # gamma(shape=3)
+# ]
+
+distributions=["normal", "beta",  
+              dict(name='gamma3', type='gamma', a=3)]
+# distributions = ["normal", "beta", "gamma"]
+
+
+# 2. Define one or more correlation scenarios
+#    Length = n_vars*(n_vars-1)/2  (upper triangle, row-major)
+correlations = [0.1, 0.5, 0.9]
+
+# 3. Generate ALL combinations → one long-format DataFrame
+result = sympg.simulate_grid(
+    distributions=distributions,
+    correlations=correlations,
+    n_obs=500,
+    random_state=42,
+)
+
+result["data"]         # (500, 9) wide DataFrame
+result["corr_matrix"]  # observed 9×9 Spearman matrix
+result["metadata"]     # column_name, dist_label, block_corr, var_index
+```
+
+### Multiple distribution sets
+
+Pass a **list of lists** to sweep both distribution types and correlation levels:
+
+```python
+dist_sets = [
+    ["normal", {"name": "beta", "a": 0.5, "b": 0.5}],   # set A
+    ["normal", {"name": "gamma_norm", "a": 2}],           # set B
+]
+
+df = sympg.simulate_grid(
+    distributions=dist_sets,   # 2 sets × 3 corr scenarios = 6 datasets
+    correlations=correlations,
+    n_obs=500,
+    var_names=["phenotype", "CpG1"],
+    random_state=0,
+)
+print(df["sim_dist_set"].unique())   # [0, 1]
+print(df["sim_corr_set"].unique())   # [0, 1, 2]
+print(df.shape)                      # (3000, 5)
+```
+
+### Single dataset
+
+```python
+single = sympg.simulate(
+    distributions=["normal", {"name": "beta", "a": 2, "b": 5}],
+    correlations=[0.7],   # one pair → one value
+    n_obs=1000,
+    var_names=["x", "y"],
+    random_state=1,
+)
+```
+
+---
+
+## Output columns
+
+| Column | Description |
+|---|---|
+| `sim_dist_set` | Index of the distribution set (0-based) |
+| `sim_corr_set` | Index of the correlation scenario (0-based) |
+| `sim_obs_id`   | Within-dataset observation index (0-based) |
+| *var columns*  | Simulated variable values |
+
+---
+
+## Built-in distributions
+
+| Key | Scipy basis | Key parameters |
+|---|---|---|
+| `normal` | `scipy.stats.norm` | `loc`, `scale` |
+| `beta` | `scipy.stats.beta` | `a`, `b` |
+| `gamma` | `scipy.stats.gamma` | `a`, `scale` |
+| `gamma_norm` | `scipy.stats.gamma` (min–max normalised) | `a`, `scale` |
+| `lognormal` | `scipy.stats.lognorm` | `s`, `scale` |
+| `uniform` | `scipy.stats.uniform` | `low`, `high` |
+| `truncnorm` | `scipy.stats.truncnorm` | `a`, `b`, `loc`, `scale` |
+
+Custom callables are also accepted: `f(uniform_samples: np.ndarray) -> np.ndarray`.
+
+---
+
+## Diagnostics helpers
+
+```python
+# Observed correlation summary across all scenarios
+corr_summary = sympg.summarise_correlations(df, var_names=["phenotype", "CpG1", "CpG2"])
+
+# Human-readable scenario metadata table
+meta = sympg.get_scenario_metadata(dist_sets, correlations, var_names=["phenotype", "CpG1", "CpG2"])
+```
+
+---
+
+## Saving results
+
+```python
+df.to_csv("simulated_grid.csv", index=False)
+```
+
+---
+
+## Correlation input format
+
+For `n` variables you need `n*(n-1)/2` values, filling the upper triangle
+row-by-row. For 4 variables (phenotype, CpG1, CpG2, CpG3):
+
+```
+Position 0 → (phenotype, CpG1)
+Position 1 → (phenotype, CpG2)
+Position 2 → (phenotype, CpG3)
+Position 3 → (CpG1, CpG2)
+Position 4 → (CpG1, CpG3)
+Position 5 → (CpG2, CpG3)
+```
+
+So `correlations = [[0.8, 0.0, 0.4, 0.2, 0.1, 0.0]]` replicates the
+original notebook example.
+
+If the matrix is not positive-definite, SymPG applies Higham's nearest-PD
+algorithm automatically (disable with `repair_pd=False`).

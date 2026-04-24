@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+setup.py
+sympg/__init__.py
+sympg/correlations.py
+sympg/diagnostics.py
+sympg/distributions.py
+sympg/plotting.py
+sympg/simulator.py
+sympg.egg-info/PKG-INFO
+sympg.egg-info/SOURCES.txt
+sympg.egg-info/dependency_links.txt
+sympg.egg-info/requires.txt
+sympg.egg-info/top_level.txt
+tests/test_plotting.py
+tests/test_sympg.py
