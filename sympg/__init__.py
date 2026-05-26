@@ -22,7 +22,8 @@ Quick start
 >>> sympg.plot_corr_accuracy(result).show()
 """
 
-from .simulator import simulate, simulate_grid, DISTRIBUTIONS
+from .simulator import simulate, simulate_grid
+from .distributions import DISTRIBUTIONS
 from .diagnostics import summarise_correlations, get_scenario_metadata
 from .plotting import (
     plot_corr_heatmap,
