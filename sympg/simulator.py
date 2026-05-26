@@ -143,14 +143,13 @@ def simulate_grid(
     correlations: List[float],
     n_obs: int = 1000,
     var_names: Optional[List[str]] = None,
+    mode: str = "equi",  # or "all_pairs"
     random_state: Optional[int] = None,
     repair_pd: bool = True,
     normalize: Union[bool, List[int], List[str]] = True,
 ) -> Dict:
     
     n_dists = len(distributions)
-    n_corrs = len(correlations)
-    n_total = n_dists * n_corrs
 
     # 1. Validate and define base names
     if var_names is None:
@@ -162,19 +161,46 @@ def simulate_grid(
 
     rng = np.random.default_rng(random_state)
 
-    # 2. Build the exact Intended Block-Diagonal Correlation Matrix
+    # 2. Build the Intended Correlation Blocks based on mode
     blocks = []
-    for r in correlations:
-        corr_block = np.full((n_dists, n_dists), r)
-        np.fill_diagonal(corr_block, 1.0)
+    
+    if mode == "all_pairs":
+        # Calculate number of unique pairs (upper triangle)
+        n_pairs = n_dists * (n_dists - 1) // 2
         
-        # Repair at the block level to perfectly preserve cross-block 0s!
-        if not _is_pd(corr_block):
-            if repair_pd:
-                corr_block = _nearest_pd(corr_block)
-            else:
-                raise ValueError(f"Equicorrelation matrix with r={r} is not positive-definite.")
-        blocks.append(corr_block)
+        # Generate the Cartesian product of all possible correlation levels
+        for combo in itertools.product(correlations, repeat=n_pairs):
+            corr_block = np.eye(n_dists)
+            
+            # Fill the upper and lower triangles
+            pair_idx = 0
+            for i in range(n_dists):
+                for j in range(i + 1, n_dists):
+                    corr_block[i, j] = corr_block[j, i] = combo[pair_idx]
+                    pair_idx += 1
+            
+            if not _is_pd(corr_block):
+                if repair_pd:
+                    corr_block = _nearest_pd(corr_block)
+                else:
+                    continue  # Skip impossible matrices if not repairing
+                    
+            blocks.append(corr_block)
+            
+    else:  # Original "equi" mode
+        for r in correlations:
+            corr_block = np.full((n_dists, n_dists), r)
+            np.fill_diagonal(corr_block, 1.0)
+            
+            if not _is_pd(corr_block):
+                if repair_pd:
+                    corr_block = _nearest_pd(corr_block)
+                else:
+                    raise ValueError(f"Equicorrelation matrix with r={r} is not PD.")
+            blocks.append(corr_block)
+
+    n_blocks = len(blocks)
+    n_total = n_dists * n_blocks
 
     # Stitch blocks together instantaneously
     full_corr_matrix = block_diag(*blocks)
@@ -191,7 +217,6 @@ def simulate_grid(
         c_idx = idx // n_dists          # Identifies which correlation block (0, 1, 2...)
         d_idx = idx % n_dists           # Identifies which distribution (0, 1, 2...)
         
-        r = correlations[c_idx]
         dist_spec = distributions[d_idx]
         base_name = base_names[d_idx]
         col_name = f"{base_name}{c_idx}"
@@ -205,7 +230,7 @@ def simulate_grid(
             "column_name": col_name,
             "distribution_type": dist_type,
             "parameters": params,
-            "block_corr": r,
+            "block_idx": c_idx,
         })
 
     data = pd.DataFrame(df_data)
@@ -219,13 +244,27 @@ def simulate_grid(
     
     pairwise_meta = []
     # Using combinations ensures distinct pairs (A-B) without reversing (B-A) or self (A-A)
+    # for var1, var2 in itertools.combinations(data.columns, 2):
+    #     pairwise_meta.append({
+    #         "var1": var1,
+    #         "var2": var2,
+    #         "intended_corr": intended_corr_df.loc[var1, var2],
+    #         "observed_corr": observed_corr_df.loc[var1, var2]
+    #     })
     for var1, var2 in itertools.combinations(data.columns, 2):
-        pairwise_meta.append({
-            "var1": var1,
-            "var2": var2,
-            "intended_corr": intended_corr_df.loc[var1, var2],
-            "observed_corr": observed_corr_df.loc[var1, var2]
-        })
+        # We only care about saving pairwise metadata for variables inside the SAME block
+        # Variables across different blocks have 0 correlation by definition of block_diag
+        v1_block = int(var1.replace(next(b for b in base_names if var1.startswith(b)), ""))
+        v2_block = int(var2.replace(next(b for b in base_names if var2.startswith(b)), ""))
+        
+        if v1_block == v2_block:
+            pairwise_meta.append({
+                "var1": var1,
+                "var2": var2,
+                "block_idx": v1_block,
+                "intended_corr": intended_corr_df.loc[var1, var2],
+                "observed_corr": observed_corr_df.loc[var1, var2]
+            })
 
     return {
         "data": data,
